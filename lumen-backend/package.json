@@ -1,0 +1,39 @@
+{
+  "name": "lumen-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lumen backend — Phase 1: repository structure and database foundation only. No API, auth, frontend, or TTS provider implementation.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:generate:custom": "drizzle-kit generate --custom",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "start": "exec tsx src/main.ts",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:db": "vitest run test/db",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.11.0",
+    "mammoth": "^1.12.1",
+    "pg": "^8.13.1",
+    "unpdf": "^1.8.1",
+    "unzipper": "^0.12.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@types/unzipper": "^0.10.11",
+    "drizzle-kit": "^0.31.10",
+    "jszip": "^3.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

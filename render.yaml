@@ -1,0 +1,41 @@
+# Render Blueprint for LUMEN — single Node.js Web Service serving both the built
+# frontend and the existing backend API, plus one Render PostgreSQL database.
+#
+# Migration runs as part of buildCommand, not preDeployCommand -- preDeployCommand
+# requires a paid Render instance type; running migrations in buildCommand is Render's
+# own documented pattern for the free tier (Drizzle's migrator only applies migrations
+# that haven't run yet, so this is safe to run on every deploy, not just the first).
+#
+# FRONTEND_STATIC_ROOT is set as ../lumen-frontend/dist -- a path relative to
+# lumen-backend's own working directory, which is what both buildCommand and
+# startCommand explicitly cd into. Verified locally (see the final audit) that plain
+# `cd` reliably changes the working directory for subsequent commands in the same
+# shell invocation, unlike `npm --prefix`, which does not.
+#
+# PORT is deliberately NOT set here -- Render injects it automatically, and the
+# backend already reads process.env.PORT (src/config/env.ts), defaulting to 3000
+# only when PORT is absent (e.g. plain local `npm start`).
+
+services:
+  - type: web
+    name: lumen
+    runtime: node
+    plan: free
+    buildCommand: cd lumen-frontend && npm install && npm run build && cd ../lumen-backend && npm install && npm run db:migrate
+    startCommand: cd lumen-backend && npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: lumen-db
+          property: connectionString
+      - key: FRONTEND_STATIC_ROOT
+        value: ../lumen-frontend/dist
+      - key: STORAGE_ROOT
+        value: ./storage-data
+      - key: ELEVENLABS_API_KEY
+        sync: false # left unset by default -- narration stays honestly unavailable until you fill this in yourself in the Render dashboard, optional
+
+databases:
+  - name: lumen-db
+    databaseName: lumen
+    plan: free
