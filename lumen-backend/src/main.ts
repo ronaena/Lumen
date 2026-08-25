@@ -1,5 +1,7 @@
 import type { Server } from 'node:http';
 import type { Pool } from 'pg';
+import path from 'node:path';
+import fs from 'node:fs';
 import { loadEnv } from './config/env.js';
 import { createDatabaseWithPool } from './db/client.js';
 import { createApiServer } from './api/server.js';
