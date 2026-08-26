@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { loadEnv } from './config/env.js';
 import { createDatabaseWithPool } from './db/client.js';
 import { createApiServer } from './api/server.js';
+import { createFrontendStaticFallback } from './api/frontendStatic.js';
 import { createSessionIdentityResolver } from './api/identity/sessionIdentityResolver.js';
 import { RateLimiter } from './api/security/RateLimiter.js';
 import { AuthService } from './auth/AuthService.js';
@@ -106,7 +107,29 @@ export async function main(): Promise<void> {
   };
 
   const rateLimiter = new RateLimiter();
-  const server = await createApiServer(deps, createSessionIdentityResolver(authService), authService, rateLimiter);
+  const notFoundFallback = env.FRONTEND_STATIC_ROOT ? createFrontendStaticFallback(env.FRONTEND_STATIC_ROOT) : undefined;
+
+  // Deployment diagnostic (Render deployment troubleshooting) -- logs exactly what the
+  // process sees at boot: the resolved absolute path, whether it exists, and what's in
+  // it. Never logs a secret. Safe to leave in permanently -- one line, no PII.
+  if (env.FRONTEND_STATIC_ROOT) {
+    const resolvedPath = path.resolve(process.cwd(), env.FRONTEND_STATIC_ROOT);
+    console.log(`FRONTEND_STATIC_ROOT is set to "${env.FRONTEND_STATIC_ROOT}" -- resolves to: ${resolvedPath}`);
+    console.log(`process.cwd() is: ${process.cwd()}`);
+    try {
+      const contents = fs.readdirSync(resolvedPath);
+      console.log(`Directory exists. Contents: ${contents.join(', ') || '(empty)'}`);
+    } catch (err) {
+      console.log(`Directory does NOT exist or cannot be read: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const server = await createApiServer(
+    deps,
+    createSessionIdentityResolver(authService),
+    authService,
+    rateLimiter,
+    notFoundFallback,
+  );
 
   await new Promise<void>((resolve) => server.listen(env.PORT, resolve));
   console.log(`Lumen API listening on port ${env.PORT}`);

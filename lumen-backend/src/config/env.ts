@@ -26,6 +26,15 @@ const envSchema = z.object({
    * search before this workstream began.
    */
   ELEVENLABS_API_KEY: z.string().min(1).optional(),
+  /**
+   * Remote Deployment v1 (approved workstream). Optional -- when set, main.ts also
+   * serves the frontend's built static files (and falls back to index.html for
+   * client-side routes) from this directory, from the SAME process/port as the API.
+   * Absent in dev mode (Vite's own dev server handles static assets) and in every
+   * existing test -- zero effect unless explicitly configured for a single-service
+   * production deployment.
+   */
+  FRONTEND_STATIC_ROOT: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

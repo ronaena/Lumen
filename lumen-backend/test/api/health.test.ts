@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtemp } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
+import { createFrontendStaticFallback } from '../../src/api/frontendStatic.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getTestDb } from '../db/setup.js';
@@ -142,6 +144,64 @@ describe('GET /ready — database-unavailable behavior (real Postgres, deliberat
       expect(text).not.toMatch(/ECONNREFUSED|Pool|node_modules|at new|stack/i);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe('GET /health and GET /ready in combined single-service mode (Remote Deployment v1)', () => {
+  it('REAL DEFECT REGRESSION: bare /health and /ready still return their real JSON status, never the SPA fallback HTML, when a static frontend fallback is configured', async () => {
+    const db = getTestDb();
+    const userRepo = new UserRepository(db);
+    const userCredentialRepo = new UserCredentialRepository(db);
+    const sessionRepo = new SessionRepository(db);
+    const storageDir = await mkdtemp(join(tmpdir(), 'lumen-combined-health-test-'));
+    const staticRoot = await mkdtemp(join(tmpdir(), 'lumen-combined-health-static-'));
+    await writeFile(join(staticRoot, 'index.html'), '<html><body>SPA shell -- should NEVER be what /health returns</body></html>');
+
+    const storage = new LocalFilesystemStorageProvider(storageDir);
+    const registry = new ProviderRegistry();
+    const authService = new AuthService({ userRepo, userCredentialRepo, sessionRepo });
+    const deps = {
+      storage,
+      registry,
+      bookRepo: new BookRepository(db),
+      chapterRepo: new ChapterRepository(db),
+      textSegmentRepo: new TextSegmentRepository(db),
+      voiceRepo: new VoiceRepository(db),
+      audioSegmentRepo: new AudioSegmentRepository(db),
+      narrationAttemptRepo: new NarrationAttemptRepository(db),
+      providerUsageRepo: new ProviderUsageRepository(db),
+      jobRepo: new ProcessingJobRepository(db),
+      listeningProgressRepo: new ListeningProgressRepository(db),
+      readingProgressRepo: new ReadingProgressRepository(db),
+      characterRepo: new CharacterRepository(db),
+      characterVoiceAssignmentRepo: new CharacterVoiceAssignmentRepository(db),
+      sceneRepo: new SceneRepository(db),
+    };
+
+    const fallback = createFrontendStaticFallback(staticRoot);
+    const server = await createApiServer(deps, createSessionIdentityResolver(authService), authService, undefined, fallback);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const addr = server.address() as AddressInfo;
+
+    try {
+      const healthResponse = await fetch(`http://127.0.0.1:${addr.port}/health`);
+      expect(healthResponse.status).toBe(200);
+      expect(await healthResponse.json()).toEqual({ status: 'ok' });
+
+      const readyResponse = await fetch(`http://127.0.0.1:${addr.port}/ready`);
+      expect(readyResponse.status).toBe(200);
+      expect(await readyResponse.json()).toEqual({ status: 'ready' });
+
+      // Confirm the SPA fallback itself still works for an actual unmatched bare route,
+      // proving the health/ready exception is narrow and didn't disable the fallback.
+      const deepLinkResponse = await fetch(`http://127.0.0.1:${addr.port}/books/some-id`);
+      expect(deepLinkResponse.status).toBe(200);
+      expect(await deepLinkResponse.text()).toContain('SPA shell');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(storageDir, { recursive: true, force: true });
+      await rm(staticRoot, { recursive: true, force: true });
     }
   });
 });

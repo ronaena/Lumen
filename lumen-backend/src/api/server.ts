@@ -1,4 +1,4 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { ApiRouter } from './http/ApiRouter';
 import type { IdentityResolver } from './identity/IdentityContext';
 import type { ApiDeps } from './ApiDeps';
@@ -59,8 +59,9 @@ export function createApiRouter(
   identityResolver: IdentityResolver,
   authService: AuthService,
   rateLimiter: RateLimiter = new RateLimiter(),
+  notFoundFallback?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>,
 ): ApiRouter {
-  const router = new ApiRouter(identityResolver, rateLimiter);
+  const router = new ApiRouter(identityResolver, rateLimiter, notFoundFallback);
 
   // Public — cannot require a pre-existing session by definition.
   router.register('GET', '/health', (req) => handleLiveness(deps, req), { public: true });
@@ -152,10 +153,11 @@ export async function createApiServer(
   identityResolver: IdentityResolver,
   authService: AuthService,
   rateLimiter: RateLimiter = new RateLimiter(),
+  notFoundFallback?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>,
 ): Promise<Server> {
   await reconcileOrphanedWork({ narrationAttemptRepo: deps.narrationAttemptRepo, jobRepo: deps.jobRepo });
 
-  const router = createApiRouter(deps, identityResolver, authService, rateLimiter);
+  const router = createApiRouter(deps, identityResolver, authService, rateLimiter, notFoundFallback);
   rateLimiter.startCleanup();
   return createServer((req, res) => {
     router.handle(req, res).catch(() => {

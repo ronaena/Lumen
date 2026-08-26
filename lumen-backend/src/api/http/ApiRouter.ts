@@ -165,6 +165,15 @@ export class ApiRouter {
   constructor(
     private readonly identityResolver: IdentityResolver,
     private readonly rateLimiter: RateLimiter = new RateLimiter(),
+    /**
+     * Remote Deployment v1 (approved workstream). Optional -- when a request matches no
+     * registered API route, this is tried before the generic 404. Used in production to
+     * serve the frontend's static build (and its client-side routes) from the same
+     * process/port as the API, so a single-service deployment needs no CORS/second-origin
+     * configuration. Absent in every existing test file and in dev mode (where Vite's own
+     * dev server handles static assets) -- zero effect on any existing caller.
+     */
+    private readonly notFoundFallback?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>,
   ) {}
 
   register(method: string, path: string, handler: RouteHandler, options: RegisterOptions = {}): void {
@@ -183,14 +192,63 @@ export class ApiRouter {
       const url = new URL(req.url ?? '/', 'http://internal');
       const pathSegments = parsePath(url.pathname);
       const method = (req.method ?? 'GET').toUpperCase();
+      /**
+       * Remote Deployment v1: when a static-file fallback is configured (combined
+       * single-service production mode), route matching only ever considers paths
+       * actually prefixed with "/api/" -- the prefix is stripped before matching. Any
+       * bare path (no "/api" prefix) skips route matching entirely and goes straight to
+       * the fallback.
+       *
+       * This distinction matters because without it, a bare path like /books/abc-123 —
+       * which in production is a real BROWSER deep-link into the frontend's own
+       * client-side route, since apiFetch() always uses the /api/ prefix and no genuine
+       * API caller ever omits it — would otherwise collide with the real backend route
+       * GET /books/:bookId and be incorrectly treated as an (unauthenticated, 401) API
+       * call instead of falling through to the SPA's index.html. Found and fixed via
+       * real end-to-end testing of the combined-serving mode, not assumed safe.
+       *
+       * When no fallback is configured (dev mode, every existing test), this branch
+       * never applies -- bare paths match routes exactly as they always have, byte for
+       * byte the same behavior as before this workstream.
+       *
+       * REAL DEFECT found and fixed via direct process verification of combined mode
+       * (not assumed safe from code review alone): GET /health and GET /ready are
+       * themselves bare, non-"/api"-prefixed routes -- by the same logic above, they
+       * were being swallowed by the SPA fallback and returning index.html instead of
+       * their real JSON status. This breaks real deployment health checks, since every
+       * common hosting platform's liveness/readiness probe hits the bare, unprefixed
+       * path by convention, not an app-specific API namespace. Fixed with a narrow,
+       * explicit exception for exactly these two well-known operational paths -- they
+       * still route normally even in combined mode, before the fallback is ever tried.
+       */
+      const isBareHealthCheckPath =
+        method === 'GET' && pathSegments.length === 1 && (pathSegments[0] === 'health' || pathSegments[0] === 'ready');
+
+      let effectiveSegments = pathSegments;
+      if (this.notFoundFallback && !isBareHealthCheckPath) {
+        if (pathSegments[0] === 'api') {
+          effectiveSegments = pathSegments.slice(1);
+        } else {
+          const handled = await this.notFoundFallback(req, res);
+          if (handled) return;
+          this.send(res, 404, { error: { code: 'ROUTE_NOT_FOUND', message: 'No matching route.' } });
+          return;
+        }
+      }
+
       const clientIp = req.socket.remoteAddress ?? 'unknown';
 
-      const matchedRoute = this.routes.find((route) => matchRoute(route, method, pathSegments) !== null);
+      const matchedRoute = this.routes.find((route) => matchRoute(route, method, effectiveSegments) !== null);
       if (!matchedRoute) {
+        // notFoundFallback was already tried above for combined mode's bare-path case;
+        // an /api/-prefixed miss that still matched nothing is a genuine API 404.
+        if (this.notFoundFallback && (await this.notFoundFallback(req, res))) {
+          return;
+        }
         this.send(res, 404, { error: { code: 'ROUTE_NOT_FOUND', message: 'No matching route.' } });
         return;
       }
-      const params = matchRoute(matchedRoute, method, pathSegments)!;
+      const params = matchRoute(matchedRoute, method, effectiveSegments)!;
 
       if (matchedRoute.rateLimit) {
         // Fail-open: if the limiter itself throws unexpectedly, the request proceeds
